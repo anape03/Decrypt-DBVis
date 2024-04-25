@@ -2,8 +2,8 @@ import java.nio.charset.StandardCharsets;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 
@@ -14,6 +14,7 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.PBEParameterSpec;
  
 import java.io.File;
+import java.lang.reflect.RecordComponent;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -21,57 +22,100 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 
-public class DBVisDecrypt {    
+public class DBVisDecrypt {
+
+    public static void main(String[] argv) {
+ 
+		System.out.println("[+] DbVisualizer Password Extractor and Decryptor.");
+        if (argv[0].equals("-h") || argv[0].equals("-help") || argv.length != 2){
+            printHelp();
+            return;
+        }
+
+        if (argv[0].equals("-f") || argv[0].equals("-file")){
+            File f = new File(argv[1]);
+            if(!f.exists() || f.isDirectory()) {
+                System.out.println("[+] File \""+argv[1]+"\" doesn't exist.");
+                return;
+            }
+
+            String dbvisConfig = argv[1];
+            System.out.println("[+] Extracting credentials from \n\t"+dbvisConfig);
+
+            DBVisDecrypt Decryptor = new DBVisDecrypt();
+            try{
+                printTable(Decryptor.extractDatabases(dbvisConfig));
+            }catch(NoSuchFieldException | SecurityException | IllegalAccessException e){
+                System.out.println("[!] Error printing table! "+e);
+            }
+
+            System.out.println("\n[+] Done. Have Fun!");
+            
+        }else if (argv[0].equals("-p") || argv[0].equals("-password")){
+            String password = argv[1];
+            System.out.println("[+] Decrypting: "+password);
+            try{
+                System.out.println("[+] Plain Text: "+decrypt(password).orElse("<not found>"));
+            }catch(Exception e){
+                System.out.println("[!] Error decrypting! "+e);
+            }
+		}
+	}
     
     /**
-     *  Record holding all credentials/info for a database.
+     * Record holding all credentials/info for a database.
+     * Driver, Name, User name, Encrypted password, Decrypted password, and connection info
      */
-	private record Database(String driver, String name, String user, String encrypted_pass, String decrypted_pass, String connection_info) {
- 
-		public Database(String driver, String name, String user, String encrypted_pass, String decrypted_pass, String connection_info){
-			this.driver          = (driver != null          && !driver.equals("")         ) ? driver : "-";
-			this.name            = (name != null            && !name.equals("")           ) ? name : "-";
-			this.user            = (user != null            && !user.equals("")           ) ? user : "-";
-			this.encrypted_pass  = (encrypted_pass != null  && !encrypted_pass.equals("") ) ? encrypted_pass : "-";
-			this.decrypted_pass  = (decrypted_pass != null  && !decrypted_pass.equals("") ) ? decrypted_pass : "-";
-			this.connection_info = (connection_info != null && !connection_info.equals("")) ? connection_info : "-";
-		}
+	private record Database(String driver, String name, String user, String encryptedPass, String decryptedPass, String connectionInfo) {
         
-        public String toString(List<Integer> max_lengths){
-            return " " 
-                + this.driver          + " ".repeat(max_lengths.get(0) - this.driver.length() + 1) + "| "
-                + this.name            + " ".repeat(max_lengths.get(1) - this.name.length() + 1) + "| "
-                + this.user            + " ".repeat(max_lengths.get(2) - this.user.length() + 1) + "| "
-                + this.encrypted_pass  + " ".repeat(max_lengths.get(3) - this.encrypted_pass.length() + 1) + "| "
-                + this.decrypted_pass  + " ".repeat(max_lengths.get(4) - this.decrypted_pass.length() + 1) + "| "
-                + this.connection_info + " ".repeat(max_lengths.get(5) - this.connection_info.length() + 1);
+		public Database(String driver, String name, String user, String encryptedPass, String decryptedPass, String connectionInfo){
+            Predicate<String> predicate = field -> field != null && !field.trim().equals("");
+			this.driver          = predicate.test(driver)         ? driver : "";
+			this.name            = predicate.test(name)           ? name : "";
+			this.user            = predicate.test(user)           ? user : "";
+			this.encryptedPass   = predicate.test(encryptedPass)  ? encryptedPass : "";
+			this.decryptedPass   = predicate.test(decryptedPass)  ? decryptedPass : "";
+			this.connectionInfo  = predicate.test(connectionInfo) ? connectionInfo : "";
+		}
+
+        public Database(){
+            this("","","","","","");
         }
         
+        public String toString(List<Integer> maxLengths) throws NoSuchFieldException, SecurityException, IllegalAccessException{
+            int i = 0;
+            String finalStr = " ";
+            int totalItems = Database.class.getDeclaredFields().length;
+            for (RecordComponent field : Database.class.getRecordComponents()){
+                String fieldValue = Database.class.getDeclaredField(field.getName()).get(this).toString();
+                finalStr += fieldValue + " ".repeat(maxLengths.get(i++) - fieldValue.length() + 1);
+                if (i < totalItems) finalStr += "| ";
+            }
+            return finalStr;
+        }
 	}
 
     /**
      * Record holding all info for a database connection.
+     * Database Name, Server, Port
      */
     private record Connection(String database, String server, String port){
 
-        public Connection(String database, String server, String port){
-            this.database = database;
-            this.server = server;
-            this.port = port;
+        public Connection() {
+            this("","","");
         }
-
     }
 
     /**
      * Decrypt password given.
-     * @param encrypted_text encrypted password given
+     * @param encryptedText encrypted password given
      * @return decrypted password 
      */
-	private static Optional<String> decrypt(String encrypted_text) {
+	private static Optional<String> decrypt(String encryptedText) {
  
 		final byte[] salt = {-114, 18, 57, -100, 7, 114, 111, 90};
 		final int iterations = 10;
-        byte[] decrypted_bytes = {};
+        byte[] decryptedBytes = {};
         
         try{
             PBEKeySpec keySpec = new PBEKeySpec("qinda".toCharArray());
@@ -82,13 +126,13 @@ public class DBVisDecrypt {
             Cipher cipher = Cipher.getInstance("PBEWithMD5AndDES");
             cipher.init( Cipher.DECRYPT_MODE, key, pbeParamSpec );
     
-            decrypted_bytes = cipher.doFinal(Base64.getDecoder().decode(encrypted_text));
-            String decrypted = new String(decrypted_bytes, StandardCharsets.UTF_8);
+            decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(encryptedText));
+            String decrypted = new String(decryptedBytes, StandardCharsets.UTF_8);
 
             return Optional.of(decrypted);
             
         }catch(Exception e){
-            System.err.println("[!] Error decrypting password ("+encrypted_text+")! "+e);
+            System.out.println("[!] Error decrypting password ("+encryptedText+")! "+e);
         }
 
         return Optional.empty();
@@ -96,10 +140,10 @@ public class DBVisDecrypt {
 
     /**
      * Extract data for database connections from configuration file.
-     * @param config_file configuration file path
+     * @param configFile configuration file path
      * @return list of database data
      */
-	private List<Database> extractDatabases(String config_file) {
+	private List<Database> extractDatabases(String configFile) {
 
         Document document = null;
         List<Database> creds = new ArrayList<Database>();
@@ -108,29 +152,29 @@ public class DBVisDecrypt {
         // Global Proxy 
 
         try{
-            File file = new File(config_file);
+            File file = new File(configFile);
             DocumentBuilderFactory documentBuilderFactory = DocumentBuilderFactory.newInstance();
             DocumentBuilder documentBuilder = documentBuilderFactory.newDocumentBuilder();
             document = documentBuilder.parse(file);
         }catch(Exception e){
-            System.err.println("[!] Error reading config file ("+config_file+")! "+e);
+            System.out.println("[!] Error reading config file ("+configFile+")! "+e);
         }
         
-        String driver     = "Proxy";
-        String name       = "Default Proxy";
-        String proxy_user = document.getElementsByTagName("ProxyUser").item(0).getTextContent();
-        String proxy_type = document.getElementsByTagName("ProxyType").item(0).getTextContent();
-        String proxy_host = document.getElementsByTagName("ProxyHost").item(0).getTextContent();
-        String proxy_port = document.getElementsByTagName("ProxyPort").item(0).getTextContent();
-        String conn_info  = String.format("%s://%s:%s", proxy_type, proxy_host, proxy_port);
-        String proxy_encr_pass = document.getElementsByTagName("ProxyPassword").item(0).getTextContent();
-        String proxy_decr_pass = "";
+        String driver    = "Proxy";
+        String name      = "Default Proxy";
+        String proxyUser = document.getElementsByTagName("ProxyUser").item(0).getTextContent();
+        String proxyType = document.getElementsByTagName("ProxyType").item(0).getTextContent();
+        String proxyHost = document.getElementsByTagName("ProxyHost").item(0).getTextContent();
+        String proxyPort = document.getElementsByTagName("ProxyPort").item(0).getTextContent();
+        String connInfo  = String.format("%s://%s:%s", proxyType, proxyHost, proxyPort);
+        String proxyEncrPass = document.getElementsByTagName("ProxyPassword").item(0).getTextContent();
+        String proxyDecrPass = "";
 
-        if (!proxy_encr_pass.equals("")){
-            proxy_decr_pass = decrypt(proxy_encr_pass).get();
+        if (!proxyEncrPass.equals("")){
+            proxyDecrPass = decrypt(proxyEncrPass).orElse("");
         }
         
-        creds.add(new Database(driver, name, proxy_user, proxy_encr_pass, proxy_decr_pass, conn_info));
+        creds.add(new Database(driver, name, proxyUser, proxyEncrPass, proxyDecrPass, connInfo));
         
         // Individual Databases
 
@@ -138,10 +182,7 @@ public class DBVisDecrypt {
 
         for (Node db = dbs.getFirstChild(); db != null; db = db.getNextSibling()){
             if (db.getNodeName().equals("#text")) continue;
-
-            Optional<Database> cred = getDatabaseInfo(db);
-            if (cred.isPresent())
-                creds.add(cred.get());
+            creds.add(getDatabaseInfo(db).orElse(new Database()));
         }
 
         return creds;
@@ -163,19 +204,17 @@ public class DBVisDecrypt {
                 cred.put(key, value);
             }
         }
-        String encrypted_pass = cred.get("Password");
-        String decrypted_pass = encrypted_pass != null ? decrypt(encrypted_pass).get() : "";
+        String encryptedPass = cred.get("Password");
+        String decryptedPass = encryptedPass != "" ? decrypt(encryptedPass).orElse("") : "";
 
-        if (!encrypted_pass.equals("-")){
-            String conn_info = cred.get("Url");
-            if (conn_info == null){
-                Connection url_variables = getConnectionInfo(db);
-                conn_info = String.format("%s://%s:%s", url_variables.database(), 
-                                                            url_variables.server(), 
-                                                            url_variables.port());
+        if (!encryptedPass.equals("")){
+            String connInfo = cred.get("Url");
+            if (connInfo == null){
+                Connection urlVariables = getConnectionInfo(db);
+                connInfo = String.format("%s://%s:%s", urlVariables.database(), urlVariables.server(), urlVariables.port());
             }
             return Optional.of(new Database(cred.get("Driver"), cred.get("Alias"), cred.get("Userid"),
-                               encrypted_pass, decrypted_pass, conn_info));
+                                            encryptedPass, decryptedPass, connInfo));
         }
         return Optional.empty(); 
     }
@@ -187,18 +226,24 @@ public class DBVisDecrypt {
      */
     private Connection getConnectionInfo(Node db) {
 
-        HashMap<String,String> url_variables = new HashMap<String,String>();
-        Node url_var_node = getDirectChild(getDirectChild(db,"UrlVariables"),"Driver");
-        for (Node child = url_var_node.getFirstChild(); child != null; child = child.getNextSibling()){
+        HashMap<String,String> urlVariables = new HashMap<String,String>();
+        Node urlVariablesNode = null;
+        try{
+            urlVariablesNode = getDirectChild(getDirectChild(db,"UrlVariables").orElseThrow(),"Driver").orElseThrow();
+        }catch(Exception e){
+            return new Connection();
+        }
+        
+        for (Node child = urlVariablesNode.getFirstChild(); child != null; child = child.getNextSibling()){
             if (child.getNodeName().equals("UrlVariable")) {
                 String key = child.getAttributes().getNamedItem("UrlVariableName").getTextContent();
                 String value = child.getTextContent().trim();
-                url_variables.put(key, value);
+                urlVariables.put(key, value);
             }
         }
-        return new Connection(url_variables.get("Database"),
-                              url_variables.get("Server"),
-                              url_variables.get("Port"));
+        return new Connection(urlVariables.get("Database"),
+                              urlVariables.get("Server"),
+                              urlVariables.get("Port"));
     }
 
     /**
@@ -207,34 +252,40 @@ public class DBVisDecrypt {
      * @param name child node name
      * @return child node
      */
-    private Node getDirectChild(Node parent, String name) {
+    private Optional<Node> getDirectChild(Node parent, String name) {
 
         for(Node child = parent.getFirstChild(); child != null; child = child.getNextSibling()){
-            if(name.equals(child.getNodeName())) return child;
+            if(name.equals(child.getNodeName())) return Optional.of(child);
         }
-        return null;
+        return Optional.empty(); 
     }
 
     /**
      * Print table with databases' data.
      * @param rows databases list
      */
-	private static void printTable(List<Database> rows) {
+	private static void printTable(List<Database> rows) throws NoSuchFieldException, SecurityException, IllegalAccessException{
 
-        List<Integer> column_lengths = new ArrayList<>(Arrays.asList(
-            rows.stream().mapToInt(c -> c.driver().length()).max().orElse(0),
-            rows.stream().mapToInt(c -> c.name().length()).max().orElse(0),
-            rows.stream().mapToInt(c -> c.user().length()).max().orElse(0),
-            rows.stream().mapToInt(c -> c.encrypted_pass().length()).max().orElse(0),
-            rows.stream().mapToInt(c -> c.decrypted_pass().length()).max().orElse(0),
-            rows.stream().mapToInt(c -> c.connection_info().length()).max().orElse(0)
-        ));
+        List<Integer> columnLengths = new ArrayList<>();
+        
+        for (RecordComponent value : Database.class.getRecordComponents()){
+            columnLengths.add(rows.stream().mapToInt(db -> {
+                try{
+                    return Database.class.getDeclaredField(value.getName()).get(db).toString().length();
+                }catch(Exception e){
+                    return 0;
+                }
+                }).max().orElse(0));
+        }
         
         for (int i = 0; i < rows.size(); i++){
-            System.out.println(rows.get(i).toString(column_lengths));
+            System.out.println(rows.get(i).toString(columnLengths));
             if (i == 0){
-                column_lengths.forEach(length -> System.out.print("-".repeat(length + 2) + "+"));
-                System.out.println();
+                String headerLine = columnLengths.stream()
+                    .map(len -> "-".repeat(len + 2) + "+")
+                    .reduce((s1,s2) -> s1.concat(s2))
+                    .get();
+                System.out.println(headerLine.substring(0,headerLine.length()-1));
             }
         }
 	}
@@ -243,47 +294,11 @@ public class DBVisDecrypt {
      * Print Help Menu.
      */
     private static void printHelp(){
+
         System.out.println("[+] Help menu.\n" +
                            "\tOptions:\n" +
                            "\t-f,-file <value>          Get data and decrypted passwords for every database in DBVis configuration file.\n" +
                            "\t-p,-password <value>      Decrypt specific password.\n"
         );
     }
- 
-	public static void main(String[] argv) {
- 
-		System.out.println("[+] DbVisualizer Password Extractor and Decryptor.");
-		String dbvis_config = "";
-        if (argv[0].equals("-h") || argv[0].equals("-help")){
-            printHelp();
-            return;
-        }
-		if (argv.length == 2) {
-            if (argv[0].equals("-f") || argv[0].equals("-file")){
-                File f = new File(argv[1]);
-                if(f.exists() && !f.isDirectory()) {
-                    dbvis_config = argv[1];
-
-                    System.out.println("[+] Extracting credentials from \n\t"+dbvis_config);
-
-                    DBVisDecrypt Decryptor = new DBVisDecrypt();
-                    printTable(Decryptor.extractDatabases(dbvis_config));
-
-                    System.out.println("\n[+] Done. Have Fun!");
-                }else{
-                    System.out.println("[+] File \""+argv[1]+"\" doesn't exists.");
-                }
-            }else if (argv[0].equals("-p") || argv[0].equals("-password")){
-                String password = argv[1];
-                System.out.println("[+] Decrypting: "+password);
-                try{
-                    System.out.println("[+] Plain Text: "+decrypt(password).get());
-                }catch(Exception e){
-                    System.err.println("[!] Error decrypting! "+e);
-                }
-			}
-            return;
-		}
-        printHelp();	
-	}
 }
